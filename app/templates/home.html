@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Spotify-Twitch Integration</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
+</head>
+
+<body>
+  <h1>Welcome to Spotify-Twitch Integration</h1>
+
+  {% if not spotify_logged_in %}
+  <div class="login-section">
+    <h2>Get Started</h2>
+    <a href="{{ url_for('main.login') }}" class="button spotify-button">
+      Login with Spotify
+    </a>
+  </div>
+  {% else %}
+  <div class="user-info">
+    <h2>Your Connected Accounts</h2>
+    <div class="account-status">
+      <div class="account spotify">
+        <h3>Spotify</h3>
+        <p>Connected as: <span class="username">{{ spotify_username }}</span></p>
+      </div>
+
+      {% if twitch_logged_in %}
+      <div class="account twitch">
+        <h3>Twitch</h3>
+        <p>Connected as: <span class="username">{{ twitch_username }}</span></p>
+      </div>
+      {% else %}
+      <div class="account twitch">
+        <h3>Twitch</h3>
+        <p>Not connected</p>
+        <a href="{{ url_for('main.twitch_login') }}" class="button twitch-button">
+          Connect Twitch Account
+        </a>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% if spotify_logged_in and twitch_logged_in %}
+  <div class="monitoring-status">
+    <h3>Twitch Channel Monitoring</h3>
+    {% if user.twitch_monitored_channel %}
+    <p>You are currently monitoring {{ user.twitch_monitored_channel }}'s channel.</p>
+    {% else %}
+    <p>No channel selected for monitoring</p>
+    {% endif %}
+    <a href="{{ url_for('main.manage_channel') }}" class="btn btn-primary btn-lg">
+      <i class="fas fa-cog me-2"></i>
+      {% if user.twitch_monitored_channel %}Change{% else %}Set{% endif %} Monitored Channel
+    </a>
+  </div>
+  {% endif %}
+  <div class="logout-section">
+    <button type="button" class="btn btn-danger" data-toggle="modal" data-target="#logoutModal">
+      Logout
+    </button>
+  </div>
+  {% endif %}
+
+  <!-- Logout Confirmation Modal -->
+  <div class="modal fade" id="logoutModal" tabindex="-1" role="dialog" aria-labelledby="logoutModalLabel"
+    aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="logoutModalLabel">Confirm Logout</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          Warning: This will remove all your data from the system. Are you sure you want to logout?
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+          <a href="{{ url_for('main.logout') }}" class="btn btn-danger">Logout</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>
