@@ -1,0 +1,5 @@
+[MASTER]
+ignore=migrations
+
+[MESSAGES CONTROL]
+disable=too-many-locals,missing-function-docstring,missing-module-docstring
