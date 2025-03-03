@@ -1,30 +1,31 @@
-from flask import Blueprint, jsonify, request, redirect, session, url_for, current_app, render_template, flash
-from app.models import db, SpotifyTokens
-from app.config import Config
-from app.extensions import scheduler
-import requests
 import base64
 import os
 from urllib.parse import urlencode
+from flask import (Blueprint, jsonify, request,
+                   redirect, session, url_for, current_app, render_template, flash)
+import requests
+from app.models import db, SpotifyTokens
+from app.config import Config
+from app.extensions import scheduler
 
 main = Blueprint('main', __name__)
 
 def get_moderated_channels(access_token, client_id, user_id):
     """Get list of channels where the user is a moderator"""
     current_app.logger.info(f"Getting moderated channels for user ID {user_id}")
-    url = f"https://api.twitch.tv/helix/moderation/channels"
-    
+    url = "https://api.twitch.tv/helix/moderation/channels"
+
     headers = {
         'Authorization': f'Bearer {access_token}',
         'Client-Id': client_id
     }
-    
+
     params = {
         'user_id': user_id  # The ID of the user whose moderator channels we want to get
     }
-    
-    response = requests.get(url, headers=headers, params=params)
-    
+
+    response = requests.get(url, headers=headers, params=params, timeout=15)
+
     if response.status_code == 200:
         return response.json()['data']
     return None
@@ -35,7 +36,7 @@ def home():
     twitch_logged_in = False
     spotify_username = None
     twitch_username = None
-    user = None    
+    user = None
     # Check if user is logged into Spotify
     if 'user_uri' in session:
         user = SpotifyTokens.query.filter_by(user_uri=session['user_uri']).first()
@@ -46,7 +47,7 @@ def home():
                 twitch_logged_in = True
                 twitch_username = user.twitch_user_login
 
-    return render_template('home.html', 
+    return render_template('home.html',
                          spotify_logged_in=spotify_logged_in,
                          twitch_logged_in=twitch_logged_in,
                            spotify_username=spotify_username,
@@ -58,7 +59,7 @@ def login():
     # Generate a random state
     state = base64.b64encode(os.urandom(32)).decode('utf-8')
     session['state'] = state
-    
+
     # Force consent screen and include all scopes
     auth_params = {
         'client_id': Config.SPOTIFY_CLIENT_ID,
@@ -68,7 +69,7 @@ def login():
         'scope': Config.SPOTIFY_SCOPES,
         'show_dialog': 'true'  # Force consent screen
     }
-    
+
     # Clear existing tokens if user is logged in
     if 'user_uri' in session:
         user = SpotifyTokens.query.filter_by(user_uri=session['user_uri']).first()
@@ -76,7 +77,7 @@ def login():
             db.session.delete(user)
             db.session.commit()
         session.pop('user_uri', None)
-    
+
     auth_url = f'https://accounts.spotify.com/authorize?{urlencode(auth_params)}'
     return redirect(auth_url)
 
@@ -84,7 +85,8 @@ def login():
 def callback():
     code = request.args.get('code')
     token_url = "https://accounts.spotify.com/api/token"
-    auth_header = base64.b64encode(f"{Config.SPOTIFY_CLIENT_ID}:{Config.SPOTIFY_CLIENT_SECRET}".encode()).decode()
+    auth_header = base64.b64encode(
+        f"{Config.SPOTIFY_CLIENT_ID}:{Config.SPOTIFY_CLIENT_SECRET}".encode()).decode()
     headers = {
         'Authorization': f'Basic {auth_header}'
     }
@@ -93,7 +95,7 @@ def callback():
         'code': code,
         'redirect_uri': Config.SPOTIFY_REDIRECT_URI
     }
-    response = requests.post(token_url, headers=headers, data=data)
+    response = requests.post(token_url, headers=headers, data=data, timeout=15)
     response_data = response.json()
     if 'access_token' in response_data:
         access_token = response_data['access_token']
@@ -103,7 +105,7 @@ def callback():
         # Store the granted scopes
         granted_scopes = response_data.get('scope', '').split(' ')
         required_scopes = Config.SPOTIFY_SCOPES.split(' ')
-        
+
         # Verify all required scopes were granted
         if not all(scope in granted_scopes for scope in required_scopes):
             return jsonify({
@@ -114,7 +116,7 @@ def callback():
         me_headers = {
             'Authorization': f'Bearer {access_token}'
         }
-        me_response = requests.get(me_url, headers=me_headers)
+        me_response = requests.get(me_url, headers=me_headers, timeout=15)
         me_data = me_response.json()
         user_id = me_data.get('id')
         current_app.logger.info("Retrieved user_id:", user_id)
@@ -131,8 +133,8 @@ def callback():
         db.session.commit()
         session['user_uri'] = user_uri
         return redirect(url_for('main.home'))
-    else:
-        return jsonify({'error': 'Failed to obtain token'}), 400
+
+    return jsonify({'error': 'Failed to obtain token'}), 400
 
 @main.route('/logout')
 def logout():
@@ -143,7 +145,6 @@ def logout():
             # Delete the user from database
             db.session.delete(user)
             db.session.commit()
-    
     # Clear the session
     session.clear()
     return redirect(url_for('main.home'))
@@ -152,7 +153,7 @@ def logout():
 def twitch_login():
     auth_url = (
         f"https://id.twitch.tv/oauth2/authorize?response_type=code"
-        f"&client_id={Config.TWITCH_CLIENT_ID}&scope={Config.TWITCH_SCOPES}&redirect_uri={Config.TWITCH_REDIRECT_URI}"
+            f"&client_id={Config.TWITCH_CLIENT_ID}&scope={Config.TWITCH_SCOPES}&redirect_uri={Config.TWITCH_REDIRECT_URI}" # pylint: disable=line-too-long
     )
     return redirect(auth_url)
 
@@ -160,10 +161,10 @@ def twitch_login():
 def twitch_callback():
     code = request.args.get('code')
     user_uri = session.get('user_uri')  # Get Spotify user_uri from session
-    
+
     if not user_uri:
         return jsonify({'error': 'Spotify authentication required'}), 400
-    
+
     token_url = "https://id.twitch.tv/oauth2/token"
     data = {
         'client_id': Config.TWITCH_CLIENT_ID,
@@ -172,48 +173,47 @@ def twitch_callback():
         'grant_type': 'authorization_code',
         'redirect_uri': Config.TWITCH_REDIRECT_URI
     }
-    
-    response = requests.post(token_url, data=data)
+
+    response = requests.post(token_url, data=data, timeout=15)
     token_data = response.json()
-    
+
     if 'access_token' in token_data:
         access_token = token_data['access_token']
         refresh_token = token_data.get('refresh_token')
         expires_in = token_data.get('expires_in', 14400)
-        
+
         user_url = "https://api.twitch.tv/helix/users"
         headers = {
             'Authorization': f'Bearer {access_token}',
             'Client-Id': Config.TWITCH_CLIENT_ID
         }
-        
-        user_response = requests.get(user_url, headers=headers)
+
+        user_response = requests.get(user_url, headers=headers, timeout=15)
         user_data = user_response.json()
-        
+
         if 'data' in user_data and len(user_data['data']) > 0:
             user_info = user_data['data'][0]
             twitch_user_id = user_info.get('id')
             user_name = user_info.get('login')
-            
-            
+
             # First try to find by Spotify user_uri (which we know exists)
             user_token = SpotifyTokens.query.filter_by(user_uri=user_uri).first()
-            
+
             if user_token:
                 # Update existing record with Twitch information
-                user_token.set_twitch_tokens(twitch_user_id, access_token, refresh_token, expires_in, user_name)
+                user_token.set_twitch_tokens(
+                    twitch_user_id, access_token, refresh_token, expires_in, user_name)
             else:
                 return jsonify({'error': 'Spotify user record not found'}), 400
-            
+
             db.session.commit()
-            
+
             session['twitch_access_token'] = access_token
             session['twitch_refresh_token'] = refresh_token
-            return redirect(url_for('main.home')) 
-        else:
-            return jsonify({'error': 'Failed to obtain user information'}), 400
-    else:
-        return jsonify({'error': 'Failed to obtain Twitch tokens'}), 400
+            return redirect(url_for('main.home'))
+
+        return jsonify({'error': 'Failed to obtain user information'}), 400
+    return jsonify({'error': 'Failed to obtain Twitch tokens'}), 400
 
 @main.route('/scheduler/status')
 def scheduler_status():
@@ -268,4 +268,6 @@ def manage_channel():
             'is_own_channel': False
         } for channel in moderated_channels])
 
-    return render_template('manage_channel.html', channels=channels, current_channel=user.twitch_monitored_channel)
+    return render_template('manage_channel.html',
+                           channels=channels,
+                           current_channel=user.twitch_monitored_channel)
