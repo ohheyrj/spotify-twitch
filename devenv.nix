@@ -9,4 +9,8 @@
     enable = true;
     entry = "gitleaks protect";
   };
+  git-hooks.hooks.pylint = { 
+    enable = true; 
+    excludes = ["migrations"];
+  };
 }
