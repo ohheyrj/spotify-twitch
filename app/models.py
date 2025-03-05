@@ -26,8 +26,9 @@ class User(db.Model):
     spotify_display_picture = db.Column(db.Text(), nullable=True) # images[0]url from Spotify API
     twitch_display_picture = db.Column(db.Text(), nullable=True) # profile_image_url from Twitch API
     twitch_monitored_channel = db.Column(db.String(255), nullable=True)
-
-
+    spotify_add_to_playlist = db.Column(db.Boolean(), default=False)
+    spotify_playlist_id = db.Column(db.String(255), nullable=True)
+    twitch_monitored_channel_is_live = db.Column(db.Boolean(), default=False)
 class SpotifyToken(db.Model):
     __tablename__ = 'spotify_tokens'
     id = db.Column(db.Integer, primary_key=True)
@@ -166,7 +167,6 @@ class TwitchToken(db.Model):
                     token_data['access_token'],
                     token_data['refresh_token'],
                     token_data.get('expires_in', 14400),  # Default to 4 hours if not provided
-                    twitch_login  # Add login/username
                 )
                 return True
 

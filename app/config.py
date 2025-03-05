@@ -10,7 +10,7 @@ class Config:
     DB_PASSWORD = os.environ.get('DB_PASSWORD')
     SQLALCHEMY_DATABASE_URI = f'mysql+mysqlconnector://{DB_USERNAME}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}'
     ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
-    SPOTIFY_SCOPES = "user-read-private user-read-email user-read-currently-playing"
+    SPOTIFY_SCOPES = "user-read-private user-read-email user-read-currently-playing playlist-read-private playlist-read-collaborative playlist-modify-public playlist-modify-private playlist-modify-public playlist-modify-private"
     SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID', 'your_spotify_client_id')
     SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET', 'your_spotify_client_secret')
     SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://localhost:5000/callback')

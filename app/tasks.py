@@ -43,15 +43,15 @@ def refresh_all_tokens(app):  # Add app parameter
                         Config.TWITCH_CLIENT_SECRET
                     )
                     if success:
-                        logger.info(f"Refreshed Twitch token for user {user.twitch_user_id}")
+                        logger.info(f"Refreshed Twitch token for user {user.twitch_uri}")
                     else:
-                        logger.error(f"Failed to refresh Twitch token for user {user.twitch_user_id}")
+                        logger.error(f"Failed to refresh Twitch token for user {user.twitch_uri}")
 
                 db.session.commit()
             except Exception as e:
                 db.session.rollback()
                 error_traceback = traceback.format_exc()
-                logger.error(f"Error processing user {user.spotify_uri}: {str(e)}")
+                logger.error(f"Error processing user {user.twitch_uri}: {str(e)}")
                 logger.error(f"Traceback: {error_traceback}") 
         logger.info(f"Completed token refresh at {datetime.now()}")
 
@@ -61,11 +61,14 @@ def check_current_songs(app):
         users = SpotifyToken.query.all()
 
         for user in users:
+            user_details = User.query.filter_by(spotify_uri=user.spotify_uri).first()
+            is_live = user_details.twitch_monitored_channel_is_live
+            add_to_playlist = user_details.spotify_add_to_playlist
+            spotify_playlist = user_details.spotify_playlist_id or None
             song_playing = SongPlaying.query.filter_by(spotify_uri=user.spotify_uri).first()
             try:
                 # Create Spotify client
                 decrypted_token = user.get_decrypted_spotify_access_token()
-                logger.info(f"Decrypted token for user {user.spotify_uri}: {bool(decrypted_token)}")  # Just print if we have a token, not the token itself
 
                 sp = spotipy.Spotify(auth=decrypted_token)
 
@@ -87,9 +90,13 @@ def check_current_songs(app):
                                     current_playing_song_artist=current_song_artist, current_playing_song_uri=current_song_uri)
                         db.session.add(song_playing)
                         logger.info(f"Added current song for user {user.spotify_uri} to {current_song_id}. {current_song_title} by {current_song_artist}. Spotify URI {current_song_uri}")
-
+                    
+                    if is_live and add_to_playlist:
+                        sp.playlist_add_items(spotify_playlist, [current_song_uri])
+                        playlist_content = sp.playlist_items(spotify_playlist)
+                        print(playlist_content)
                 else:
-                    logger.info(f"No song currently playing for user {user.spotify_uri}")
+                    logger.debug(f"No song currently playing for user {user.spotify_uri}")
                 db.session.commit()
             except spotipy.exceptions.SpotifyException as e:
                 logger.error(f"Spotify API error for user {user.spotify_uri}: {str(e)}")
@@ -129,12 +136,15 @@ def check_stream_status(app):
                         if data and user.twitch_monitored_channel and user.twitch_monitored_channel not in active_bots:
                             logger.info(f"Stream is live for {user.twitch_monitored_channel}")
                             start_bot(user.twitch_uri, user.twitch_monitored_channel, app)
+                            user.twitch_monitored_channel_is_live = True
+                            db.session.commit()
                         
                         # Stream is offline and bot is running
                         elif not data and user.twitch_monitored_channel and user.twitch_monitored_channel in active_bots:
                             logger.info(f"Stream is offline for {user.twitch_monitored_channel}")
                             stop_bot(user.twitch_monitored_channel)
-                            
+                            user.twitch_monitored_channel_is_live = False
+                            db.session.commit()
                 except Exception as e:
                     logger.error(f"Error checking stream for {user.twitch_monitored_channel}: {str(e)}")
                     

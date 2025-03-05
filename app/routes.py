@@ -4,7 +4,8 @@ from urllib.parse import urlencode
 from flask import (Blueprint, jsonify, request,
                    redirect, session, url_for, current_app, render_template, flash)
 import requests
-from app.models import TwitchToken, db, SpotifyToken, User
+import spotipy
+from app.models import TwitchToken, db, SpotifyToken, User, SongPlaying
 from app.config import Config
 from app.extensions import scheduler
 
@@ -30,6 +31,32 @@ def get_moderated_channels(access_token, client_id, user_id):
         return response.json()['data']
     return None
 
+def get_spotify_playlists(spotify_uri):
+    token = SpotifyToken.query.filter_by(spotify_uri=spotify_uri).first()
+    playlist_items = []
+    if token:
+        sp = spotipy.Spotify(auth=token.get_decrypted_spotify_access_token())
+        
+        offset = 0
+        while True:
+            current_playlists = sp.current_user_playlists(offset=offset)
+            if not current_playlists['items']:  # If no more playlists, break
+                break
+                
+            for playlist in current_playlists['items']:
+                playlist_items.append({
+                    'id': playlist['id'],
+                    'name': playlist['name']
+                })
+                
+            if len(playlist_items) >= current_playlists['total']:  # If we've got all playlists, break
+                break
+                
+            offset += 50  # Spotify's limit is 50, so increment by 50
+            
+        return playlist_items
+    return []
+
 @main.route('/')
 def home():
     spotify_logged_in = False
@@ -39,7 +66,7 @@ def home():
     user = None
     spotify_profile_picture = None
     twitch_profile_picture = None
-    print(session)
+    spotify_playlists = None
     # Check if user is logged into Spotify
     if 'spotify_uri' in session:
         user = User.query.filter_by(spotify_uri=session['spotify_uri']).first()
@@ -47,6 +74,7 @@ def home():
             spotify_logged_in = True
             spotify_username = user.spotify_uri.split(':')[2]
             spotify_profile_picture = user.spotify_display_picture
+            spotify_playlists = get_spotify_playlists(user.spotify_uri)
             if user.twitch_uri:  # Check if user has Twitch token
                 twitch_logged_in = True
                 twitch_username = user.twitch_display_name
@@ -59,7 +87,8 @@ def home():
                             twitch_username=twitch_username,
                             spotify_profile_picture=spotify_profile_picture,
                             twitch_profile_picture=twitch_profile_picture,
-                            user=user)
+                            user=user,
+                            spotify_playlists=spotify_playlists)
 
 @main.route('/login')
 def login():
@@ -86,7 +115,6 @@ def login():
         session.pop('spotify_uri', None)
 
     auth_url = f'https://accounts.spotify.com/authorize?{urlencode(auth_params)}'
-    print(auth_url)
     return redirect(auth_url)
 
 @main.route('/callback')
@@ -126,7 +154,6 @@ def callback():
         }
         me_response = requests.get(me_url, headers=me_headers, timeout=15)
         me_data = me_response.json()
-        print(me_data)
         user_id = me_data.get('id')
         current_app.logger.info(f"Retrieved user_id: {user_id}")
         user_uri = me_data.get('uri')
@@ -155,16 +182,43 @@ def callback():
 
 @main.route('/logout')
 def logout():
-    if 'user_uri' in session:
-        # Get the user from database
-        user = SpotifyToken.query.filter_by(spotify_uri=session['spotify_uri']).first()
-        if user:
-            # Delete the user from database
-            db.session.delete(user)
-            db.session.commit()
-    # Clear the session
-    session.clear()
-    return redirect(url_for('main.home'))
+    try:
+        if 'spotify_uri' in session:
+            # First get the user and their URIs from the User table
+            user = User.query.filter_by(spotify_uri=session['spotify_uri']).first()
+            
+            if user:
+                spotify_uri = user.spotify_uri
+                twitch_uri = user.twitch_uri
+                
+                # Delete songs_playing entries
+                songs_playing = SongPlaying.query.filter_by(spotify_uri=spotify_uri).all()
+                for song in songs_playing:
+                    db.session.delete(song)
+                
+                # Delete Spotify token
+                spotify_token = SpotifyToken.query.filter_by(spotify_uri=spotify_uri).first()
+                if spotify_token:
+                    db.session.delete(spotify_token)
+                
+                # Delete Twitch token
+                twitch_token = TwitchToken.query.filter_by(twitch_uri=twitch_uri).first()
+                if twitch_token:
+                    db.session.delete(twitch_token)
+                
+                # Finally delete the user
+                db.session.delete(user)
+                
+                # Commit all deletions
+                db.session.commit()
+            
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error during logout: {str(e)}")
+    finally:
+        # Clear the session
+        session.clear()
+        return redirect(url_for('main.home'))
 
 @main.route('/twitch_login')
 def twitch_login():
@@ -308,3 +362,35 @@ def manage_channel():
     return render_template('manage_channel.html',
                            channels=channels,
                            current_channel=user.twitch_monitored_channel)
+
+
+@main.route('/save-spotify-settings', methods=['POST'])
+def save_spotify_settings():
+    # Check if user is logged in via session
+    if 'spotify_uri' not in session:
+        flash('Please login first!', 'error')
+        return redirect(url_for('main.home'))
+    
+    try:
+        # Get form data
+        add_to_playlist = request.form.get('spotify_add_to_playlist') == 'true'
+        playlist_id = request.form.get('playlist_id') if add_to_playlist else None
+
+        # Get current user using session
+        user = User.query.filter_by(spotify_uri=session['spotify_uri']).first()
+        
+        if user:
+            # Update user settings
+            user.spotify_add_to_playlist = add_to_playlist
+            user.spotify_playlist_id = playlist_id
+            db.session.commit()
+            
+            flash('Spotify settings updated successfully!', 'success')
+        else:
+            flash('User not found!', 'error')
+            
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error saving settings: {str(e)}', 'error')
+        
+    return redirect(url_for('main.home'))

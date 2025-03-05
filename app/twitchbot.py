@@ -43,7 +43,7 @@ class TwitchBot(commands.Bot):
                 playing_song = SongPlaying.query.filter_by(spotify_uri=bot_user_details.spotify_uri).first()
                 if playing_song.current_playing_song_title and playing_song.current_playing_song_artist and playing_song.current_playing_song_uri:
                     spotify_url = f"https://open.spotify.com/track/{playing_song.current_playing_song_uri.split(':')[-1]}"
-                    response = f"Now playing: {playing_song.current_playing_song_title} by {playing_song.current_playing_song_artist} - {spotify_url}"
+                    response = f"@{message.author.name} Now playing: {playing_song.current_playing_song_title} by {playing_song.current_playing_song_artist} - {spotify_url}"
                     await message.channel.send(response)
                 else:
                     await message.channel.send("No track currently playing")
