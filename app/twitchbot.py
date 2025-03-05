@@ -1,6 +1,6 @@
 from twitchio.ext import commands
 from flask import current_app
-from app.models import SpotifyTokens
+from app.models import SpotifyToken, TwitchToken, User, SongPlaying
 from app.extensions import active_bots
 import asyncio
 import threading
@@ -18,13 +18,13 @@ class TwitchBot(commands.Bot):
         super().__init__(**kwargs)
 
     async def event_ready(self):
-        print(f'Bot is ready | Connected to {self.bot_channel}')
+        print(f'Bot is ready | Connected to {self.bot_channel} for user {self.bot_user_id}')
 
     async def event_message(self, message):
         # Prevent duplicate message processing
         if message.echo or message.id in self.processed_messages:
             return
-            
+
         if message.content.lower().startswith('!whatsplaying'):
             self.processed_messages.add(message.id)
             await self.handle_whatsplaying(message)
@@ -35,14 +35,15 @@ class TwitchBot(commands.Bot):
     async def handle_whatsplaying(self, message):
         try:
             with self.flask_app.app_context():
-                user = SpotifyTokens.query.filter_by(user_id=self.bot_user_id).first()
+                bot_user_details = User.query.filter_by(twitch_uri=self.bot_user_id).first()
+                user = SpotifyToken.query.filter_by(spotify_uri=bot_user_details.spotify_uri).first()
                 if not user:
                     await message.channel.send("Error: User not found")
                     return
-                
-                if user.current_playing_song_title and user.current_playing_song_artist and user.current_playing_song_uri:
-                    spotify_url = f"https://open.spotify.com/track/{user.current_playing_song_uri.split(':')[-1]}"
-                    response = f"Now playing: {user.current_playing_song_title} by {user.current_playing_song_artist} - {spotify_url}"
+                playing_song = SongPlaying.query.filter_by(spotify_uri=bot_user_details.spotify_uri).first()
+                if playing_song.current_playing_song_title and playing_song.current_playing_song_artist and playing_song.current_playing_song_uri:
+                    spotify_url = f"https://open.spotify.com/track/{playing_song.current_playing_song_uri.split(':')[-1]}"
+                    response = f"Now playing: {playing_song.current_playing_song_title} by {playing_song.current_playing_song_artist} - {spotify_url}"
                     await message.channel.send(response)
                 else:
                     await message.channel.send("No track currently playing")
@@ -66,12 +67,13 @@ def start_bot(user_id, channel, flask_app):
             return False
 
         with flask_app.app_context():
-            user = SpotifyTokens.query.filter_by(user_id=user_id).first()
+            user = User.query.filter_by(twitch_uri=user_id).first()
+            twitch_token = TwitchToken.query.filter_by(twitch_uri=user_id).first()
             if not user:
                 print(f"No user found with ID {user_id}")
                 return False
-            
-            access_token = user.get_decrypted_twitch_access_token()
+
+            access_token = twitch_token.get_decrypted_twitch_access_token()
             if not access_token:
                 print(f"No access token found for user {user_id}")
                 return False
@@ -84,16 +86,16 @@ def start_bot(user_id, channel, flask_app):
             channel=channel,
             flask_app=flask_app
         )
-        
+
         active_bots[channel] = bot
-        
+
         bot_thread = threading.Thread(target=run_bot, args=(bot,))
         bot_thread.daemon = True
         bot_thread.start()
-        
+
         print(f"Started bot for channel {channel}")
         return True
-        
+
     except Exception as e:
         print(f"Error starting bot: {str(e)}")
         if channel in active_bots:

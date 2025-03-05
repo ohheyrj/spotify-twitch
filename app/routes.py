@@ -4,7 +4,7 @@ from urllib.parse import urlencode
 from flask import (Blueprint, jsonify, request,
                    redirect, session, url_for, current_app, render_template, flash)
 import requests
-from app.models import db, SpotifyTokens
+from app.models import TwitchToken, db, SpotifyToken, User
 from app.config import Config
 from app.extensions import scheduler
 
@@ -37,22 +37,29 @@ def home():
     spotify_username = None
     twitch_username = None
     user = None
+    spotify_profile_picture = None
+    twitch_profile_picture = None
+    print(session)
     # Check if user is logged into Spotify
-    if 'user_uri' in session:
-        user = SpotifyTokens.query.filter_by(user_uri=session['user_uri']).first()
+    if 'spotify_uri' in session:
+        user = User.query.filter_by(spotify_uri=session['spotify_uri']).first()
         if user:
             spotify_logged_in = True
-            spotify_username = user.twitch_user_login
-            if user.twitch_access_token:  # Check if user has Twitch token
+            spotify_username = user.spotify_uri.split(':')[2]
+            spotify_profile_picture = user.spotify_display_picture
+            if user.twitch_uri:  # Check if user has Twitch token
                 twitch_logged_in = True
-                twitch_username = user.twitch_user_login
+                twitch_username = user.twitch_display_name
+                twitch_profile_picture = user.twitch_display_picture
 
     return render_template('home.html',
-                         spotify_logged_in=spotify_logged_in,
-                         twitch_logged_in=twitch_logged_in,
-                           spotify_username=spotify_username,
-                           twitch_username=twitch_username,
-                           user=user)
+                            spotify_logged_in=spotify_logged_in,
+                            twitch_logged_in=twitch_logged_in,
+                            spotify_username=spotify_username,
+                            twitch_username=twitch_username,
+                            spotify_profile_picture=spotify_profile_picture,
+                            twitch_profile_picture=twitch_profile_picture,
+                            user=user)
 
 @main.route('/login')
 def login():
@@ -71,14 +78,15 @@ def login():
     }
 
     # Clear existing tokens if user is logged in
-    if 'user_uri' in session:
-        user = SpotifyTokens.query.filter_by(user_uri=session['user_uri']).first()
+    if 'spotify_uri' in session:
+        user = SpotifyToken.query.filter_by(spotify_uri=session['spotify_uri']).first()
         if user:
             db.session.delete(user)
             db.session.commit()
-        session.pop('user_uri', None)
+        session.pop('spotify_uri', None)
 
     auth_url = f'https://accounts.spotify.com/authorize?{urlencode(auth_params)}'
+    print(auth_url)
     return redirect(auth_url)
 
 @main.route('/callback')
@@ -118,20 +126,29 @@ def callback():
         }
         me_response = requests.get(me_url, headers=me_headers, timeout=15)
         me_data = me_response.json()
+        print(me_data)
         user_id = me_data.get('id')
-        current_app.logger.info("Retrieved user_id:", user_id)
+        current_app.logger.info(f"Retrieved user_id: {user_id}")
         user_uri = me_data.get('uri')
+        display_name = me_data.get('display_name')
+        display_picture_url = me_data.get('images')[0].get('url')
 
         if user_uri:
-            get_user = SpotifyTokens.query.filter_by(user_uri=user_uri).first()
-            if get_user:
-                get_user.set_spotify_tokens(access_token, refresh_token, expires_in)
+            user = User.query.filter_by(spotify_uri=user_uri).first()
+
+            if not user:
+                user = User(spotify_uri=user_uri, spotify_display_name=display_name, spotify_display_picture=display_picture_url)
+                db.session.add(user)
+
+            spotify_token = SpotifyToken.query.filter_by(spotify_uri=user_uri).first()
+            if spotify_token:
+                spotify_token.set_spotify_tokens(access_token, refresh_token, expires_in)
             else:
-                user_token = SpotifyTokens(user_id=user_id, user_uri=user_uri)
-                user_token.set_spotify_tokens(access_token, refresh_token, expires_in)
-                db.session.add(user_token)
+                spotify_token = SpotifyToken(spotify_uri=user_uri)
+                spotify_token.set_spotify_tokens(access_token, refresh_token, expires_in)
+                db.session.add(spotify_token)
         db.session.commit()
-        session['user_uri'] = user_uri
+        session['spotify_uri'] = user_uri
         return redirect(url_for('main.home'))
 
     return jsonify({'error': 'Failed to obtain token'}), 400
@@ -140,7 +157,7 @@ def callback():
 def logout():
     if 'user_uri' in session:
         # Get the user from database
-        user = SpotifyTokens.query.filter_by(user_uri=session['user_uri']).first()
+        user = SpotifyToken.query.filter_by(spotify_uri=session['spotify_uri']).first()
         if user:
             # Delete the user from database
             db.session.delete(user)
@@ -160,7 +177,7 @@ def twitch_login():
 @main.route('/twitch_callback')
 def twitch_callback():
     code = request.args.get('code')
-    user_uri = session.get('user_uri')  # Get Spotify user_uri from session
+    user_uri = session.get('spotify_uri')  # Get Spotify user_uri from session
 
     if not user_uri:
         return jsonify({'error': 'Spotify authentication required'}), 400
@@ -195,14 +212,33 @@ def twitch_callback():
             user_info = user_data['data'][0]
             twitch_user_id = user_info.get('id')
             user_name = user_info.get('login')
+            twitch_display_name = user_info.get('display_name')
+            twitch_display_picture = user_info.get('profile_image_url')
 
             # First try to find by Spotify user_uri (which we know exists)
-            user_token = SpotifyTokens.query.filter_by(user_uri=user_uri).first()
+            user_token = User.query.filter_by(spotify_uri=user_uri).first()
 
             if user_token:
                 # Update existing record with Twitch information
-                user_token.set_twitch_tokens(
-                    twitch_user_id, access_token, refresh_token, expires_in, user_name)
+                if not User.query.filter_by(twitch_uri=twitch_user_id).first():
+                    user_token.twitch_uri = twitch_user_id
+                    user_token.twitch_display_name = twitch_display_name
+                    user_token.twitch_display_picture = twitch_display_picture
+                    db.session.add(user_token)
+                    db.session.commit()
+                
+                twitch_token = TwitchToken.query.filter_by(twitch_uri=twitch_user_id).first()
+                if twitch_token: 
+                    twitch_token.set_twitch_tokens(
+                        twitch_user_id, access_token, refresh_token, expires_in, user_name)
+                    db.session.add(twitch_token)
+                    db.session.commit()
+                else:
+                    twitch_token = TwitchToken(twitch_uri=twitch_user_id)
+                    twitch_token.set_twitch_tokens(
+                        twitch_user_id, access_token, refresh_token, expires_in) 
+                    db.session.add(twitch_token)
+                    db.session.commit()
             else:
                 return jsonify({'error': 'Spotify user record not found'}), 400
 
@@ -232,24 +268,25 @@ def scheduler_status():
 
 @main.route('/manage_channel', methods=['GET', 'POST'])
 def manage_channel():
-    if 'user_uri' not in session:
+    if 'spotify_uri' not in session:
         return redirect(url_for('main.home'))
 
-    user = SpotifyTokens.query.filter_by(user_uri=session['user_uri']).first()
-    if not user or not user.twitch_access_token:
+    user = User.query.filter_by(spotify_uri=session['spotify_uri']).first()
+    if not user:
         return redirect(url_for('main.home'))
 
+    twitch_token = TwitchToken.query.filter_by(twitch_uri=user.twitch_uri).first()
     own_channel = {
-        'broadcaster_login': user.twitch_user_login,
-        'broadcaster_name': user.twitch_user_login,
+        'broadcaster_login': user.twitch_display_name,
+        'broadcaster_name': user.twitch_display_name,
         'is_own_channel': True
     }
 
-    access_token = user.get_decrypted_twitch_access_token()
+    access_token = twitch_token.get_decrypted_twitch_access_token()
     moderated_channels = get_moderated_channels(
         access_token,
         Config.TWITCH_CLIENT_ID,
-        user.twitch_user_id
+        user.twitch_uri
     )
 
     if request.method == 'POST':
