@@ -8,7 +8,7 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
     app.config['SCHEDULER_API_ENABLED'] = True
-  
+
     logger = setup_logging(app)
     logger.info('Application Starting')
 
@@ -18,18 +18,18 @@ def create_app():
     db.init_app(app)
     migrate.init_app(app, db)
     init_cipher(app)
-    
+
     with app.app_context():
         db.create_all()
-    
+
     from app.routes import main
     app.register_blueprint(main)
-    
+
     scheduler.init_app(app)
     scheduler.start()
-    
+
     # Initialize scheduler jobs
     from app.tasks import init_scheduler
     init_scheduler(app)
-    
+
     return app
